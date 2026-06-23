@@ -6,9 +6,14 @@
     "dev": "tsx watch src/app.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "start": "node dist/app.js"
+    "start": "node dist/app.js",
+    "db:generate": "prisma generate --schema db/prisma/schema.prisma",
+    "db:migrate": "docker compose -f db/docker/docker-compose.yml run --rm prisma npx prisma migrate dev --schema db/prisma/schema.prisma",
+    "db:studio": "prisma studio --schema db/prisma/schema.prisma"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
     "cookie-parser": "~1.4.4",
     "debug": "~2.6.9",
     "dotenv": "^17.4.2",
@@ -26,6 +31,7 @@
     "@types/http-errors": "^2.0.5",
     "@types/morgan": "^1.9.10",
     "@types/node": "^26.0.0",
+    "prisma": "^7.8.0",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3"
   }
