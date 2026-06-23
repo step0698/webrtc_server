@@ -10,6 +10,7 @@ datasource db {
 
 model Room {
   id        String   @id @default(uuid()) @db.Uuid
+  roomCode  String   @unique
   name      String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
