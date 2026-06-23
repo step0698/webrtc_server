@@ -1,3 +1,4 @@
+// 외부 module
 import createHttpError from 'http-errors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import path from 'path';
@@ -7,12 +8,16 @@ import http from 'http';
 import { Server } from 'socket.io';
 import envs from 'dotenv';
 
+// socket setting
 import socketSetup from './modules/socket.io';
 
+// api router setting
 import indexRouterFactory from './routes/index';
+import roomRouterFactory from './routes/room';
 
 const indexRouter = indexRouterFactory(express);
 
+// 환경변수 설정
 envs.config();
 
 const HTTP_PORT = process.env.HTTP_PORT ? Number(process.env.HTTP_PORT) : 3000;
