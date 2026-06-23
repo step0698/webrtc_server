@@ -4,7 +4,7 @@ export default (express: typeof import('express')) => {
     const router = express.Router();
 
     router.get('/', (req: Request, res: Response) => {
-        res.json({status: 200, message: 'success'});
+        res.render('index', { title: 'Simple WebRTC Server' });
     })
 
     return router;
