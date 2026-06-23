@@ -4,6 +4,8 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  // Keep this in sync with POSTGRES_SCHEMA.
+  schemas  = ["sstest"]
 }
 
 model Room {
@@ -11,4 +13,6 @@ model Room {
   name      String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@schema("sstest")
 }
