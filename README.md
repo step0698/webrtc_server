@@ -79,7 +79,7 @@ cp .env.example .env
 
 ```env
 HTTP_PORT=3000
-DATABASE_URL=postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@localhost:5432/{POSTGRES_DB}?schema={POSTGRES_SCHEMA}
+DATABASE_URL=postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}?schema={POSTGRES_SCHEMA}
 ```
 
 Docker Compose로 DB와 Prisma 명령을 실행할 때는 `db/docker/.env` 파일도 필요합니다.
@@ -97,7 +97,7 @@ POSTGRES_USER=postgres
 POSTGRES_PASSWORD=password
 POSTGRES_DB=my_db
 POSTGRES_SCHEMA=my_schema
-PRISMA_DATABASE_URL=postgresql://postgres:password@postgres:5432/my_db?schema=my_schema
+PRISMA_DATABASE_URL=postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@postgres:5432/{POSTGRES_DB}?schema={POSTGRES_SCHEMA}
 ```
 
 > `DATABASE_URL`은 로컬 Node.js 애플리케이션과 Prisma 설정에서 사용하고, `PRISMA_DATABASE_URL`은 Docker Compose의 Prisma 컨테이너에서 사용합니다.
