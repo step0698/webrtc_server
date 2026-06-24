@@ -13,26 +13,32 @@ export default (io: Server) => {
 
         console.log(`a user connected -> socket id : ${socket.id} (IP: ${ip})`);
 
+        // roomCode 기준 Socket.IO room 참가
         socket.on('room:join', async (payload: RoomJoinPayload) => {
             await handleRoomJoin(socket, payload);
         });
 
+        // 명시적 퇴장 요청 처리
         socket.on('room:leave', () => {
             leaveCurrentRoom(socket);
         });
 
+        // WebRTC offer 대상 peer 중계
         socket.on('signal:offer', (payload: SignalPayload) => {
             forwardSignal(socket, payload, 'signal:offer', 'offer');
         });
 
+        // WebRTC answer 대상 peer 중계
         socket.on('signal:answer', (payload: SignalPayload) => {
             forwardSignal(socket, payload, 'signal:answer', 'answer');
         });
 
+        // ICE candidate 대상 peer 중계
         socket.on('signal:ice-candidate', (payload: SignalPayload) => {
             forwardSignal(socket, payload, 'signal:ice-candidate', 'candidate');
         });
 
+        // 연결 종료 시 메모리 상태와 Socket.IO room 정리
         socket.on('disconnect', () => {
             leaveCurrentRoom(socket);
         });
