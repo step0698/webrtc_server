@@ -63,3 +63,22 @@ export const generateRoom = async (req: Request, res: Response, next: NextFuncti
         })
     }
 }
+
+/* Room 목록 조회 */
+export const getRoomList = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const rooms = await db.room.findMany();
+        return res.status(200).json({
+            status: 200,
+            message: 'success',
+            data: rooms,
+        });
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            status: 500,
+            message: 'Internal Server Error',
+        })
+    }
+}

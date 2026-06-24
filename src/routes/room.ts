@@ -5,5 +5,7 @@ export default (express: typeof import('express')) => {
 
     router.post('/', roomController.generateRoom);
 
+    router.get('/list', roomController.getRoomList);
+
     return router;
 }
