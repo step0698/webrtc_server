@@ -7,11 +7,21 @@ import {
     type SignalPayload,
 } from './socketEvents';
 
+type testPayload = {
+    data: any
+}
+
 export default (io: Server) => {
     io.on('connection', (socket) => {
         const ip = socket.handshake.headers['x-forwarded-for'] || socket.conn.remoteAddress?.split(":")[3] || socket.conn.remoteAddress;
 
         console.log(`a user connected -> socket id : ${socket.id} (IP: ${ip})`);
+
+        // 테스트용 event
+        socket.on('helloWorld', (payload: testPayload) => {
+            console.log(`${payload}`);
+            socket.emit('helloWorld', {data : 'Hiiiiiiiiiiii'});
+        });
 
         // roomCode 기준 Socket.IO room 참가
         socket.on('room:join', async (payload: RoomJoinPayload) => {
