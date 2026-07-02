@@ -12,7 +12,6 @@ import db from "./prisma";
 
 export type RoomJoinPayload = {
     roomCode?: unknown;
-    peerId?: unknown;
 };
 
 export type SignalPayload = {
@@ -61,7 +60,7 @@ export const handleRoomJoin = async (socket: Socket, payload: RoomJoinPayload) =
     }
 
     const roomCode = payload.roomCode.trim();
-    const peerId = isNonEmptyString(payload.peerId) ? payload.peerId.trim() : randomUUID();
+    const peerId = randomUUID();
 
     try {
         // DB에 생성된 roomCode 확인으로 임의 room 참가 방지
@@ -72,14 +71,6 @@ export const handleRoomJoin = async (socket: Socket, payload: RoomJoinPayload) =
 
         if (!room) {
             emitRoomError(socket, 'ROOM_NOT_FOUND', 'Room does not exist.');
-            return;
-        }
-
-        // 같은 room 내 peerId 중복 확인
-        const existingParticipant = getParticipant(roomCode, peerId);
-
-        if (existingParticipant) {
-            emitRoomError(socket, 'PEER_ALREADY_JOINED', 'Peer already joined this room.');
             return;
         }
 
@@ -119,16 +110,20 @@ export const forwardSignal = (
     event: SignalEvent,
     payloadKey: SignalPayloadKey,
 ) => {
+    console.log(`${socket.id} send ${event} (${JSON.stringify(payload)})`)
+
     // room 참가 socket만 signaling 메시지 전송 허용
     const presence = getSocketPresence(socket.id);
 
     if (!presence) {
+        console.log(`socket ${socket.id} : NOT_JOINED_ROOM`)
         emitRoomError(socket, 'NOT_JOINED_ROOM', 'Socket has not joined a room.');
         return;
     }
 
     // 대상 peerId 존재 여부 검증
     if (!isObjectPayload(payload) || !isNonEmptyString(payload.toPeerId)) {
+        console.log(`socket ${socket.id} : INVALID_SIGNAL_PAYLOAD`)
         emitRoomError(socket, 'INVALID_SIGNAL_PAYLOAD', 'toPeerId is required.');
         return;
     }
@@ -137,6 +132,7 @@ export const forwardSignal = (
 
     // SDP/ICE 내용 해석 없이 객체 형태만 확인
     if (!isObjectPayload(signalValue)) {
+        console.log(`socket ${socket.id} : INVALID_SIGNAL_PAYLOAD`)
         emitRoomError(socket, 'INVALID_SIGNAL_PAYLOAD', `${payloadKey} must be an object.`);
         return;
     }
@@ -145,6 +141,7 @@ export const forwardSignal = (
     const target = getParticipant(presence.roomCode, payload.toPeerId.trim());
 
     if (!target) {
+        console.log(`socket ${socket.id} : PEER_NOT_FOUND`)
         emitRoomError(socket, 'PEER_NOT_FOUND', 'Target peer does not exist in this room.');
         return;
     }

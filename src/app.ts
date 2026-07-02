@@ -60,7 +60,11 @@ const httpServer = http.createServer(app).listen(HTTP_PORT, () => {
 
 const io = new Server(httpServer, {
   pingInterval: 10000,
-  pingTimeout: 20000
+  pingTimeout: 20000,
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
 });
 
 socketSetup(io);

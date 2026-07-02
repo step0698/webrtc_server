@@ -253,12 +253,11 @@ a user connected -> socket id : <socket_id> (IP: <ip>)
 
 ```ts
 socket.emit('room:join', {
-  roomCode: 'r_ABCD2345',
-  peerId: 'optional-client-peer-id'
+  roomCode: 'r_ABCD2345'
 });
 ```
 
-`peerId`를 보내지 않으면 서버가 UUID를 생성합니다.
+서버는 참가 처리 중 `peerId`를 UUID로 생성합니다. 클라이언트는 참가 성공 응답의 `peerId`를 저장한 뒤 이후 signaling 흐름에서 사용합니다.
 
 참가 성공 시 새 참가자에게 전달됩니다.
 
@@ -357,7 +356,6 @@ socket.on('room:error', (payload) => {
 | `INVALID_ROOM_JOIN_PAYLOAD` | room 참가 payload가 올바르지 않거나 `roomCode`가 없음 |
 | `ALREADY_JOINED_ROOM` | 하나의 socket이 이미 room에 참가 중 |
 | `ROOM_NOT_FOUND` | DB에 존재하지 않는 roomCode |
-| `PEER_ALREADY_JOINED` | 같은 room에 동일 peerId가 이미 참가 중 |
 | `ROOM_JOIN_FAILED` | room 참가 처리 중 서버 오류 |
 | `NOT_JOINED_ROOM` | room에 참가하지 않은 socket이 signal 전송 |
 | `INVALID_SIGNAL_PAYLOAD` | signal payload가 올바르지 않음 |
