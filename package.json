@@ -3,7 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "tsx watch src/app.ts",
+    "dev": "tsx src/app.ts",
+    "dev:watch": "tsx watch src/app.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "start": "node dist/app.js",
