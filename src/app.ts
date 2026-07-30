@@ -6,7 +6,9 @@ import cookieParser from 'cookie-parser';
 import logger from 'morgan';
 import http from 'http';
 import { Server } from 'socket.io';
-import envs from 'dotenv';
+import { env } from './config/env';
+import { mediasoupConfig } from './config/mediasoup';
+import { MediaRoomManager, WorkerManager } from './managers';
 
 // socket setting
 import socketSetup from './modules/socket.io';
@@ -18,14 +20,9 @@ import roomRouterFactory from './routes/room';
 const indexRouter = indexRouterFactory(express);
 const roomRouter = roomRouterFactory(express);
 
-// 환경변수 설정
-envs.config();
-
-const HTTP_PORT = process.env.HTTP_PORT ? Number(process.env.HTTP_PORT) : 3000;
-
 const app = express();
 
-// view engine setup
+// Express view engine 및 공통 middleware 설정
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
 
@@ -38,12 +35,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/', indexRouter);
 app.use('/room', roomRouter);
 
-// catch 404 and forward to error handler
+// 등록된 route가 처리하지 않은 요청을 404 error handler로 전달한다.
 app.use(function(req, res, next) {
   next(createHttpError(404));
 });
 
-// error handler
+// Express 요청 처리 중 발생한 오류의 최종 응답을 담당한다.
 app.use(function(err: createHttpError.HttpError, req: Request, res: Response, next: NextFunction) {
   // set locals, only providing error in development
   res.locals.message = err.message;
@@ -54,10 +51,10 @@ app.use(function(err: createHttpError.HttpError, req: Request, res: Response, ne
   res.render('error');
 });
 
-const httpServer = http.createServer(app).listen(HTTP_PORT, () => {
-    console.log(`✅  Server is running at port ${HTTP_PORT}.`);
-});
+// Worker 준비 전에는 listen하지 않고 HTTP 서버 객체만 먼저 생성한다.
+const httpServer = http.createServer(app);
 
+// Socket.IO는 HTTP 서버를 공유하지만 실제 연결 수신은 listen 이후 시작된다.
 const io = new Server(httpServer, {
   pingInterval: 10000,
   pingTimeout: 20000,
@@ -68,3 +65,58 @@ const io = new Server(httpServer, {
 });
 
 socketSetup(io);
+
+// 현재는 Worker 한 개를 사용하지만 설정값으로 확장 가능한 Manager를 구성한다.
+export const workerManager = new WorkerManager({
+  workerCount: mediasoupConfig.workerCount,
+  workerSettings: mediasoupConfig.workerSettings,
+  onWorkerDied: (workerId, error) => {
+    console.error(`mediasoup ${workerId} died.`, error);
+  },
+});
+
+// 아직 signaling에는 연결하지 않으며 다음 단계에서 Socket.IO handler에 주입한다.
+export const mediaRoomManager = new MediaRoomManager(
+  workerManager,
+  mediasoupConfig.routerOptions,
+);
+
+const listen = (): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    // 포트 충돌 등 listen 단계의 오류를 bootstrap 호출자에게 전달한다.
+    const handleError = (error: Error) => {
+      reject(error);
+    };
+
+    httpServer.once('error', handleError);
+    httpServer.listen(env.httpPort, () => {
+      httpServer.off('error', handleError);
+      console.log(`✅ Server is running at port ${env.httpPort}.`);
+      resolve();
+    });
+  });
+};
+
+/**
+ * mediasoup가 준비되기 전에 클라이언트 요청을 받지 않도록
+ * Worker 초기화가 성공한 이후 HTTP/Socket.IO 서버를 시작한다.
+ */
+export const bootstrap = async (): Promise<void> => {
+  // Worker 생성 실패 시 HTTP 포트를 열지 않고 그대로 시작에 실패한다.
+  await workerManager.initialize();
+  console.log(`✅ ${workerManager.size} mediasoup Worker initialized.`);
+
+  try {
+    await listen();
+  } catch (error) {
+    // HTTP 서버를 열지 못했다면 이미 생성한 native Worker 프로세스를 정리한다.
+    workerManager.close();
+    throw error;
+  }
+};
+
+void bootstrap().catch((error) => {
+  // 시작 실패를 운영 환경에서 감지할 수 있도록 비정상 종료 코드를 설정한다.
+  console.error('Failed to start server.', error);
+  process.exitCode = 1;
+});
