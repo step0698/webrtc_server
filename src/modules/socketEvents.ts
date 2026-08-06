@@ -1,28 +1,12 @@
-import {
-    addParticipant,
-    getParticipant,
-    getSocketPresence,
-    listParticipants,
-    removeSocket,
-    type Participant,
-} from "./signalingStore";
-import type { Socket } from "socket.io";
-import { randomUUID } from "crypto";
-import db from "./prisma";
+import { randomUUID } from 'crypto';
+import type { Socket } from 'socket.io';
+import type { MediaRoomManager } from '../managers';
+import type { PeerSession } from './PeerSession';
+import db from './prisma';
 
 export type RoomJoinPayload = {
     roomCode?: unknown;
 };
-
-export type SignalPayload = {
-    toPeerId?: unknown;
-    offer?: unknown;
-    answer?: unknown;
-    candidate?: unknown;
-};
-
-type SignalEvent = 'signal:offer' | 'signal:answer' | 'signal:ice-candidate';
-type SignalPayloadKey = 'offer' | 'answer' | 'candidate';
 
 // 비어 있지 않은 문자열 payload 확인
 const isNonEmptyString = (value: unknown): value is string => {
@@ -34,10 +18,10 @@ const isObjectPayload = (value: unknown): value is Record<string, unknown> => {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 };
 
-// 클라이언트에 노출 가능한 참가자 정보 직렬화
-const serializeParticipant = (participant: Participant) => ({
-    peerId: participant.peerId,
-    joinedAt: participant.joinedAt,
+// mediasoup 객체나 socketId를 노출하지 않고 공개 가능한 Peer 정보만 반환한다.
+const serializePeer = (peer: PeerSession) => ({
+    peerId: peer.peerId,
+    joinedAt: peer.joinedAt,
 });
 
 // Socket.IO 클라이언트에 표준 room:error 이벤트 전달
@@ -45,8 +29,12 @@ const emitRoomError = (socket: Socket, code: string, message: string) => {
     socket.emit('room:error', { code, message });
 };
 
-// roomCode 검증 후 해당 signaling room 참가 처리
-export const handleRoomJoin = async (socket: Socket, payload: RoomJoinPayload) => {
+// roomCode 검증 후 DB Room에 대응하는 활성 SFU MediaRoom 참가를 처리한다.
+export const handleRoomJoin = async (
+    socket: Socket,
+    payload: RoomJoinPayload,
+    mediaRoomManager: MediaRoomManager,
+) => {
     // 요청 payload 기본 형태 검증
     if (!isObjectPayload(payload) || !isNonEmptyString(payload.roomCode)) {
         emitRoomError(socket, 'INVALID_ROOM_JOIN_PAYLOAD', 'roomCode is required.');
@@ -54,13 +42,17 @@ export const handleRoomJoin = async (socket: Socket, payload: RoomJoinPayload) =
     }
 
     // socket당 단일 room 참가 제한
-    if (getSocketPresence(socket.id)) {
+    if (
+        socket.data.sfuJoinPending === true ||
+        mediaRoomManager.getRoomBySocket(socket.id)
+    ) {
         emitRoomError(socket, 'ALREADY_JOINED_ROOM', 'Socket already joined a room.');
         return;
     }
 
     const roomCode = payload.roomCode.trim();
     const peerId = randomUUID();
+    socket.data.sfuJoinPending = true;
 
     try {
         // DB에 생성된 roomCode 확인으로 임의 room 참가 방지
@@ -74,81 +66,61 @@ export const handleRoomJoin = async (socket: Socket, payload: RoomJoinPayload) =
             return;
         }
 
-        // 새 참가자에는 기존 참가자 목록 전달, 기존 참가자에는 입장 알림
-        const participants = listParticipants(roomCode).map(serializeParticipant);
-        const participant = addParticipant(roomCode, peerId, socket.id);
+        // DB 조회를 기다리는 동안 연결이 종료됐다면 SFU 리소스를 생성하지 않는다.
+        if (!socket.connected) {
+            return;
+        }
 
-        socket.join(roomCode);
+        // 첫 Peer라면 Router와 MediaRoom을 생성하고, 이후 Peer는 기존 Router를 공유한다.
+        const mediaRoom = await mediaRoomManager.getOrCreateRoom(roomCode);
+        const peers = mediaRoom.listPeers().map(serializePeer);
+        const peer = mediaRoom.addPeer(peerId, socket.id);
+
+        try {
+            await socket.join(roomCode);
+        } catch (error) {
+            // Socket.IO room 참가 실패 시 먼저 등록한 SFU Peer 상태를 원복한다.
+            mediaRoom.removePeer(peerId);
+            mediaRoomManager.closeRoomIfEmpty(roomCode);
+            throw error;
+        }
+
         socket.emit('room:joined', {
             roomCode,
-            peerId: participant.peerId,
-            participants,
+            peerId: peer.peerId,
+            peers,
+            routerRtpCapabilities: mediaRoom.router.rtpCapabilities,
         });
-        socket.to(roomCode).emit('peer:joined', serializeParticipant(participant));
+        socket.to(roomCode).emit('peer:joined', serializePeer(peer));
     } catch (error) {
         console.error(error);
+        // Peer 등록 전 실패해 비어 있는 MediaRoom이 남았다면 Router까지 정리한다.
+        mediaRoomManager.closeRoomIfEmpty(roomCode);
         emitRoomError(socket, 'ROOM_JOIN_FAILED', 'Failed to join room.');
+    } finally {
+        socket.data.sfuJoinPending = false;
     }
 };
 
-// socket 연결을 현재 room 상태에서 제거하고 남은 참가자에게 퇴장 알림
-export const leaveCurrentRoom = (socket: Socket) => {
-    const presence = removeSocket(socket.id);
-
-    if (!presence) {
-        return;
-    }
-
-    socket.leave(presence.roomCode);
-    socket.to(presence.roomCode).emit('peer:left', { peerId: presence.peerId });
-};
-
-// offer, answer, ICE candidate를 같은 room 안의 특정 peer에게만 전달
-export const forwardSignal = (
+// socket이 소유한 Peer 리소스를 닫고 비어 있는 MediaRoom과 Router를 정리한다.
+export const leaveCurrentRoom = async (
     socket: Socket,
-    payload: SignalPayload,
-    event: SignalEvent,
-    payloadKey: SignalPayloadKey,
+    mediaRoomManager: MediaRoomManager,
 ) => {
-    console.log(`${socket.id} send ${event} (${JSON.stringify(payload)})`)
+    const mediaRoom = mediaRoomManager.getRoomBySocket(socket.id);
 
-    // room 참가 socket만 signaling 메시지 전송 허용
-    const presence = getSocketPresence(socket.id);
-
-    if (!presence) {
-        console.log(`socket ${socket.id} : NOT_JOINED_ROOM`)
-        emitRoomError(socket, 'NOT_JOINED_ROOM', 'Socket has not joined a room.');
+    if (!mediaRoom) {
         return;
     }
 
-    // 대상 peerId 존재 여부 검증
-    if (!isObjectPayload(payload) || !isNonEmptyString(payload.toPeerId)) {
-        console.log(`socket ${socket.id} : INVALID_SIGNAL_PAYLOAD`)
-        emitRoomError(socket, 'INVALID_SIGNAL_PAYLOAD', 'toPeerId is required.');
+    const peer = mediaRoom.getPeerBySocket(socket.id);
+
+    if (!peer) {
         return;
     }
 
-    const signalValue = payload[payloadKey];
-
-    // SDP/ICE 내용 해석 없이 객체 형태만 확인
-    if (!isObjectPayload(signalValue)) {
-        console.log(`socket ${socket.id} : INVALID_SIGNAL_PAYLOAD`)
-        emitRoomError(socket, 'INVALID_SIGNAL_PAYLOAD', `${payloadKey} must be an object.`);
-        return;
-    }
-
-    // 같은 room 안에 있는 대상 peer socket 조회
-    const target = getParticipant(presence.roomCode, payload.toPeerId.trim());
-
-    if (!target) {
-        console.log(`socket ${socket.id} : PEER_NOT_FOUND`)
-        emitRoomError(socket, 'PEER_NOT_FOUND', 'Target peer does not exist in this room.');
-        return;
-    }
-
-    // Socket.IO room 전체가 아닌 대상 socket 하나에만 signaling payload 전달
-    socket.to(target.socketId).emit(event, {
-        fromPeerId: presence.peerId,
-        [payloadKey]: signalValue,
-    });
+    mediaRoom.removePeer(peer.peerId);
+    await socket.leave(mediaRoom.roomCode);
+    socket.to(mediaRoom.roomCode).emit('peer:left', { peerId: peer.peerId });
+    mediaRoomManager.closeRoomIfEmpty(mediaRoom.roomCode);
 };

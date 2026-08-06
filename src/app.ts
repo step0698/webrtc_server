@@ -64,8 +64,6 @@ const io = new Server(httpServer, {
   }
 });
 
-socketSetup(io);
-
 // 현재는 Worker 한 개를 사용하지만 설정값으로 확장 가능한 Manager를 구성한다.
 export const workerManager = new WorkerManager({
   workerCount: mediasoupConfig.workerCount,
@@ -80,6 +78,9 @@ export const mediaRoomManager = new MediaRoomManager(
   workerManager,
   mediasoupConfig.routerOptions,
 );
+
+// Socket.IO signaling 계층이 활성 SFU Room 상태를 공유하도록 Manager를 주입한다.
+socketSetup(io, mediaRoomManager);
 
 const listen = (): Promise<void> => {
   return new Promise((resolve, reject) => {

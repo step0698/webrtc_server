@@ -1,6 +1,6 @@
 # WebRTC Server
 
-Express, Socket.IO, Prisma, PostgreSQL 기반의 간단한 WebRTC 시그널링 서버 프로젝트입니다. 룸 생성/조회 API를 제공하고, 생성된 `roomCode`를 기준으로 Socket.IO room에 참가한 peer 간 WebRTC offer, answer, ICE candidate를 중계합니다.
+Express, Socket.IO, Prisma, PostgreSQL, mediasoup 기반의 WebRTC SFU 서버 프로젝트입니다. 룸 생성/조회 API를 제공하고, 생성된 `roomCode`를 기준으로 mediasoup Router와 Peer의 미디어 리소스를 관리합니다.
 
 ## 주요 기능
 
@@ -12,8 +12,8 @@ Express, Socket.IO, Prisma, PostgreSQL 기반의 간단한 WebRTC 시그널링 �
 - 룸 생성 API
 - 룸 목록 조회 API
 - 충돌 가능성을 고려한 랜덤 룸 코드 생성
-- Socket.IO 기반 WebRTC 시그널링 이벤트 중계
-- room별 참가자/peer 상태 메모리 관리
+- mediasoup Worker 및 Router 생명주기 관리
+- SFU MediaRoom 및 Peer 리소스 메모리 관리
 
 ## 기술 스택
 
@@ -21,6 +21,7 @@ Express, Socket.IO, Prisma, PostgreSQL 기반의 간단한 WebRTC 시그널링 �
 - TypeScript
 - Express
 - Socket.IO
+- mediasoup
 - Prisma
 - PostgreSQL
 - Docker Compose
@@ -43,9 +44,18 @@ Express, Socket.IO, Prisma, PostgreSQL 기반의 간단한 WebRTC 시그널링 �
 │   ├── app.ts
 │   ├── controllers
 │   │   └── roomController.ts
+│   ├── config
+│   │   ├── env.ts
+│   │   └── mediasoup.ts
+│   ├── managers
+│   │   ├── MediaRoomManager.ts
+│   │   └── WorkerManager.ts
+│   ├── media
+│   │   ├── MediaRoom.ts
+│   │   └── MediaTypes.ts
 │   ├── modules
+│   │   ├── PeerSession.ts
 │   │   ├── prisma.ts
-│   │   ├── signalingStore.ts
 │   │   ├── socket.io.ts
 │   │   └── socketEvents.ts
 │   ├── routes
@@ -79,6 +89,13 @@ cp .env.example .env
 
 ```env
 HTTP_PORT=3000
+MEDIASOUP_WORKER_COUNT=1
+MEDIASOUP_WORKER_LOG_LEVEL=warn
+MEDIASOUP_RTC_MIN_PORT=40000
+MEDIASOUP_RTC_MAX_PORT=49999
+MEDIASOUP_LISTEN_IP=0.0.0.0
+MEDIASOUP_ANNOUNCED_ADDRESS=
+MEDIASOUP_INITIAL_OUTGOING_BITRATE=1000000
 DATABASE_URL=postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}?schema={POSTGRES_SCHEMA}
 ```
 
@@ -265,7 +282,8 @@ socket.emit('room:join', {
 socket.on('room:joined', (payload) => {
   // payload.roomCode
   // payload.peerId
-  // payload.participants
+  // payload.peers
+  // payload.routerRtpCapabilities
 });
 ```
 
@@ -292,52 +310,6 @@ socket.on('peer:left', (payload) => {
 });
 ```
 
-### WebRTC 시그널 중계
-
-서버는 SDP/ICE payload의 내부 구조를 해석하지 않고 객체 형태만 확인한 뒤, 같은 room 안의 대상 peer socket 하나에만 전달합니다.
-
-Offer:
-
-```ts
-socket.emit('signal:offer', {
-  toPeerId: 'target-peer-id',
-  offer: {}
-});
-
-socket.on('signal:offer', (payload) => {
-  // payload.fromPeerId
-  // payload.offer
-});
-```
-
-Answer:
-
-```ts
-socket.emit('signal:answer', {
-  toPeerId: 'target-peer-id',
-  answer: {}
-});
-
-socket.on('signal:answer', (payload) => {
-  // payload.fromPeerId
-  // payload.answer
-});
-```
-
-ICE candidate:
-
-```ts
-socket.emit('signal:ice-candidate', {
-  toPeerId: 'target-peer-id',
-  candidate: {}
-});
-
-socket.on('signal:ice-candidate', (payload) => {
-  // payload.fromPeerId
-  // payload.candidate
-});
-```
-
 ### Socket.IO 에러 이벤트
 
 시그널링 또는 room 참가 실패 시 서버는 표준 에러 이벤트를 보냅니다.
@@ -357,11 +329,8 @@ socket.on('room:error', (payload) => {
 | `ALREADY_JOINED_ROOM` | 하나의 socket이 이미 room에 참가 중 |
 | `ROOM_NOT_FOUND` | DB에 존재하지 않는 roomCode |
 | `ROOM_JOIN_FAILED` | room 참가 처리 중 서버 오류 |
-| `NOT_JOINED_ROOM` | room에 참가하지 않은 socket이 signal 전송 |
-| `INVALID_SIGNAL_PAYLOAD` | signal payload가 올바르지 않음 |
-| `PEER_NOT_FOUND` | 대상 peer가 같은 room에 존재하지 않음 |
 
-참가자 상태는 `signalingStore`의 메모리 `Map`으로 관리됩니다. 서버 재시작 시 현재 접속 상태는 초기화되고, 룸 생성 정보는 PostgreSQL에 남습니다.
+활성 MediaRoom과 Peer 상태는 `MediaRoomManager`의 메모리에서 관리됩니다. 서버 재시작 시 mediasoup Router와 현재 접속 상태는 초기화되고, DB의 룸 생성 정보는 PostgreSQL에 남습니다.
 
 ## 데이터베이스 모델
 
@@ -382,8 +351,8 @@ model Room {
 - 서버 진입점은 `src/app.ts`입니다.
 - 정적 파일 경로는 `src/app.ts` 기준 `public` 디렉터리로 설정되어 있습니다.
 - Prisma Client는 개발 환경에서 `globalThis`에 캐시되어 watch 모드에서 중복 인스턴스 생성을 줄입니다.
-- `socket.io.ts`는 Socket.IO 이벤트 바인딩을 담당하고, 실제 room 참가/퇴장/signaling 처리는 `socketEvents.ts`에 분리되어 있습니다.
-- `signalingStore.ts`는 roomCode별 참가자 목록과 socket별 현재 참가 상태를 메모리에서 관리합니다.
+- `socket.io.ts`는 Socket.IO 이벤트 바인딩을 담당하고, 실제 MediaRoom 참가/퇴장 처리는 `socketEvents.ts`에 분리되어 있습니다.
+- `WorkerManager`는 Worker 생성과 Room 배치를, `MediaRoomManager`는 활성 Router와 Peer 상태를 관리합니다.
 
 ## 타입 검사 및 빌드
 

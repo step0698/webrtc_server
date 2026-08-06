@@ -1,17 +1,16 @@
 import { type Server } from 'socket.io';
+import type { MediaRoomManager } from '../managers';
 import {
     handleRoomJoin,
     leaveCurrentRoom,
-    forwardSignal,
     type RoomJoinPayload,
-    type SignalPayload,
 } from './socketEvents';
 
 type testPayload = {
     data: any
 }
 
-export default (io: Server) => {
+export default (io: Server, mediaRoomManager: MediaRoomManager) => {
     io.on('connection', (socket) => {
         const ip = socket.handshake.headers['x-forwarded-for'] || socket.conn.remoteAddress?.split(":")[3] || socket.conn.remoteAddress;
 
@@ -25,32 +24,17 @@ export default (io: Server) => {
 
         // roomCode 기준 Socket.IO room 참가
         socket.on('room:join', async (payload: RoomJoinPayload) => {
-            await handleRoomJoin(socket, payload);
+            await handleRoomJoin(socket, payload, mediaRoomManager);
         });
 
         // 명시적 퇴장 요청 처리
-        socket.on('room:leave', () => {
-            leaveCurrentRoom(socket);
+        socket.on('room:leave', async () => {
+            await leaveCurrentRoom(socket, mediaRoomManager);
         });
 
-        // WebRTC offer 대상 peer 중계
-        socket.on('signal:offer', (payload: SignalPayload) => {
-            forwardSignal(socket, payload, 'signal:offer', 'offer');
-        });
-
-        // WebRTC answer 대상 peer 중계
-        socket.on('signal:answer', (payload: SignalPayload) => {
-            forwardSignal(socket, payload, 'signal:answer', 'answer');
-        });
-
-        // ICE candidate 대상 peer 중계
-        socket.on('signal:ice-candidate', (payload: SignalPayload) => {
-            forwardSignal(socket, payload, 'signal:ice-candidate', 'candidate');
-        });
-
-        // 연결 종료 시 메모리 상태와 Socket.IO room 정리
-        socket.on('disconnect', () => {
-            leaveCurrentRoom(socket);
+        // Socket.IO가 room 목록을 비우기 전 SFU Peer 리소스를 정리한다.
+        socket.on('disconnecting', async () => {
+            await leaveCurrentRoom(socket, mediaRoomManager);
         });
     })
 }

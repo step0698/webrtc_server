@@ -30,6 +30,13 @@ export class MediaRoomManager {
         return this.rooms.get(roomCode);
     }
 
+    getRoomBySocket(socketId: string): MediaRoom | undefined {
+        // socket당 하나의 MediaRoom만 허용하므로 첫 번째 일치 Room을 반환한다.
+        return Array.from(this.rooms.values()).find((room) => {
+            return room.getPeerBySocket(socketId) !== undefined;
+        });
+    }
+
     async getOrCreateRoom(roomCode: string): Promise<MediaRoom> {
         // 이미 활성화된 Room이면 기존 Router를 그대로 재사용한다.
         const existingRoom = this.rooms.get(roomCode);
