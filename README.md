@@ -283,6 +283,7 @@ socket.on('room:joined', (payload) => {
   // payload.roomCode
   // payload.peerId
   // payload.peers
+  // payload.producers
   // payload.routerRtpCapabilities
 });
 ```
@@ -358,6 +359,82 @@ type SocketResult<T> =
   | { ok: false; error: { code: string; message: string } };
 ```
 
+### Producer 생성
+
+연결된 send Transport에 마이크, 카메라 또는 화면 공유 Producer를 생성합니다.
+미디어 태그와 kind는 다음 조합만 허용됩니다.
+
+```text
+microphone → audio
+camera     → video
+screen     → video
+```
+
+```ts
+sendTransport.on('produce', (
+  { kind, rtpParameters, appData },
+  callback,
+  errback
+) => {
+  socket.emit(
+    'producer:create',
+    {
+      transportId: sendTransport.id,
+      kind,
+      rtpParameters,
+      mediaTag: appData.mediaTag
+    },
+    (result) => {
+      if (!result.ok) {
+        errback(new Error(result.error.message));
+        return;
+      }
+
+      callback({ id: result.data.id });
+    }
+  );
+});
+```
+
+같은 MediaRoom의 다른 Peer에게는 새 Producer가 전달됩니다.
+
+```ts
+socket.on('producer:available', (payload) => {
+  // payload.peerId
+  // payload.producerId
+  // payload.kind
+  // payload.mediaTag
+});
+```
+
+Peer당 `microphone`, `camera`, `screen` Producer를 각각 최대 하나씩 생성할 수
+있습니다. 늦게 참가한 Peer는 `room:joined`의 `producers` 목록으로 기존
+Producer를 확인할 수 있습니다.
+
+### Producer 종료
+
+```ts
+socket.emit(
+  'producer:close',
+  { producerId },
+  (result) => {
+    if (!result.ok) {
+      console.error(result.error);
+    }
+  }
+);
+```
+
+명시적 종료 또는 send Transport 종료로 Producer가 닫히면 다른 Peer에게
+다음 이벤트가 전달됩니다.
+
+```ts
+socket.on('producer:closed', (payload) => {
+  // payload.peerId
+  // payload.producerId
+});
+```
+
 ### Room 퇴장
 
 ```ts
@@ -397,6 +474,12 @@ socket.on('room:error', (payload) => {
 | `TRANSPORT_NOT_FOUND` | 요청한 Transport가 해당 Peer 소유가 아님 |
 | `TRANSPORT_CREATE_FAILED` | WebRTC Transport 생성 실패 |
 | `TRANSPORT_CONNECT_FAILED` | WebRTC Transport DTLS 연결 실패 |
+| `INVALID_PRODUCER_PAYLOAD` | Producer 요청 또는 kind/mediaTag 조합이 올바르지 않음 |
+| `INVALID_TRANSPORT_DIRECTION` | recv Transport로 Producer 생성 요청 |
+| `PRODUCER_ALREADY_EXISTS` | 같은 mediaTag Producer가 이미 존재하거나 생성 중 |
+| `PRODUCER_NOT_FOUND` | 요청한 Producer가 해당 Peer 소유가 아님 |
+| `PRODUCER_CREATE_FAILED` | Producer 생성 실패 |
+| `PRODUCER_CLOSE_FAILED` | Producer 종료 처리 실패 |
 
 활성 MediaRoom과 Peer 상태는 `MediaRoomManager`의 메모리에서 관리됩니다. 서버 재시작 시 mediasoup Router와 현재 접속 상태는 초기화되고, DB의 룸 생성 정보는 PostgreSQL에 남습니다.
 
@@ -419,7 +502,7 @@ model Room {
 - 서버 진입점은 `src/app.ts`입니다.
 - 정적 파일 경로는 `src/app.ts` 기준 `public` 디렉터리로 설정되어 있습니다.
 - Prisma Client는 개발 환경에서 `globalThis`에 캐시되어 watch 모드에서 중복 인스턴스 생성을 줄입니다.
-- `socket.io.ts`는 Socket.IO 이벤트 바인딩을 담당하고, MediaRoom 참가/퇴장은 `socketEvents.ts`, Transport 처리는 `signaling/handlers/TransportHandlers.ts`에 분리되어 있습니다.
+- `socket.io.ts`는 Socket.IO 이벤트 바인딩을 담당하고, MediaRoom 참가/퇴장은 `socketEvents.ts`, Transport와 Producer 처리는 `signaling/handlers`에 분리되어 있습니다.
 - `WorkerManager`는 Worker 생성과 Room 배치를, `MediaRoomManager`는 활성 Router와 Peer 상태를 관리합니다.
 
 ## 타입 검사 및 빌드

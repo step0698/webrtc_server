@@ -1,5 +1,7 @@
 import type { types as mediasoupTypes } from 'mediasoup';
 import type {
+    MediaTag,
+    PeerProducer,
     PeerResources,
     TransportDirection,
 } from '../media/MediaTypes';
@@ -18,6 +20,8 @@ export class PeerSession {
     private readonly transportIdsByDirection = new Map<TransportDirection, string>();
     private readonly pendingTransportDirections = new Set<TransportDirection>();
     private readonly producers = new Map<string, mediasoupTypes.Producer>();
+    private readonly producerIdsByMediaTag = new Map<MediaTag, string>();
+    private readonly pendingProducerMediaTags = new Set<MediaTag>();
     private readonly consumers = new Map<string, mediasoupTypes.Consumer>();
     private closed = false;
 
@@ -83,6 +87,18 @@ export class PeerSession {
         return transportId ? this.transports.get(transportId) : undefined;
     }
 
+    getTransportDirection(
+        transportId: string,
+    ): TransportDirection | undefined {
+        for (const [direction, id] of this.transportIdsByDirection) {
+            if (id === transportId) {
+                return direction;
+            }
+        }
+
+        return undefined;
+    }
+
     removeTransport(transportId: string): boolean {
         const transport = this.transports.get(transportId);
 
@@ -103,18 +119,88 @@ export class PeerSession {
         return true;
     }
 
-    addProducer(producer: mediasoupTypes.Producer): void {
+    beginProducerCreation(mediaTag: MediaTag): boolean {
+        this.assertOpen();
+
+        if (
+            this.producerIdsByMediaTag.has(mediaTag) ||
+            this.pendingProducerMediaTags.has(mediaTag)
+        ) {
+            return false;
+        }
+
+        this.pendingProducerMediaTags.add(mediaTag);
+        return true;
+    }
+
+    cancelProducerCreation(mediaTag: MediaTag): void {
+        this.pendingProducerMediaTags.delete(mediaTag);
+    }
+
+    addProducer(
+        producer: mediasoupTypes.Producer,
+        mediaTag: MediaTag,
+    ): void {
         this.assertOpen();
         this.assertUnique(this.producers, producer.id, 'Producer');
+
+        if (this.producerIdsByMediaTag.has(mediaTag)) {
+            throw new Error(`${mediaTag} Producer is already registered.`);
+        }
+
         this.producers.set(producer.id, producer);
+        this.producerIdsByMediaTag.set(mediaTag, producer.id);
+        this.pendingProducerMediaTags.delete(mediaTag);
         // transport 종료 등으로 Producer가 닫힌 경우 자동으로 참조를 제거한다.
         producer.observer.once('close', () => {
             this.producers.delete(producer.id);
+            if (this.producerIdsByMediaTag.get(mediaTag) === producer.id) {
+                this.producerIdsByMediaTag.delete(mediaTag);
+            }
         });
     }
 
     getProducer(producerId: string): mediasoupTypes.Producer | undefined {
         return this.producers.get(producerId);
+    }
+
+    getProducerByMediaTag(mediaTag: MediaTag): mediasoupTypes.Producer | undefined {
+        const producerId = this.producerIdsByMediaTag.get(mediaTag);
+        return producerId ? this.producers.get(producerId) : undefined;
+    }
+
+    listProducers(): readonly PeerProducer[] {
+        const result: PeerProducer[] = [];
+
+        for (const [mediaTag, producerId] of this.producerIdsByMediaTag) {
+            const producer = this.producers.get(producerId);
+
+            if (producer) {
+                result.push({ producer, mediaTag });
+            }
+        }
+
+        return result;
+    }
+
+    removeProducer(producerId: string): mediasoupTypes.Producer | undefined {
+        const producer = this.producers.get(producerId);
+
+        if (!producer) {
+            return undefined;
+        }
+
+        producer.close();
+        this.producers.delete(producerId);
+
+        for (const [mediaTag, id] of this.producerIdsByMediaTag) {
+            if (id === producerId) {
+                this.producerIdsByMediaTag.delete(mediaTag);
+                break;
+            }
+        }
+
+        return producer;
     }
 
     addConsumer(consumer: mediasoupTypes.Consumer): void {
@@ -161,6 +247,8 @@ export class PeerSession {
 
         this.consumers.clear();
         this.producers.clear();
+        this.producerIdsByMediaTag.clear();
+        this.pendingProducerMediaTags.clear();
         this.transports.clear();
         this.transportIdsByDirection.clear();
         this.pendingTransportDirections.clear();

@@ -24,6 +24,16 @@ const serializePeer = (peer: PeerSession) => ({
     joinedAt: peer.joinedAt,
 });
 
+// 새 Peer가 기존 송출 미디어를 바로 구독할 수 있도록 Producer 목록을 직렬화한다.
+const serializePeerProducers = (peer: PeerSession) => {
+    return peer.listProducers().map(({ producer, mediaTag }) => ({
+        peerId: peer.peerId,
+        producerId: producer.id,
+        kind: producer.kind,
+        mediaTag,
+    }));
+};
+
 // Socket.IO 클라이언트에 표준 room:error 이벤트 전달
 const emitRoomError = (socket: Socket, code: string, message: string) => {
     socket.emit('room:error', { code, message });
@@ -74,6 +84,9 @@ export const handleRoomJoin = async (
         // 첫 Peer라면 Router와 MediaRoom을 생성하고, 이후 Peer는 기존 Router를 공유한다.
         const mediaRoom = await mediaRoomManager.getOrCreateRoom(roomCode);
         const peers = mediaRoom.listPeers().map(serializePeer);
+        const producers = mediaRoom
+            .listPeers()
+            .flatMap(serializePeerProducers);
         const peer = mediaRoom.addPeer(peerId, socket.id);
 
         try {
@@ -89,6 +102,7 @@ export const handleRoomJoin = async (
             roomCode,
             peerId: peer.peerId,
             peers,
+            producers,
             routerRtpCapabilities: mediaRoom.router.rtpCapabilities,
         });
         socket.to(roomCode).emit('peer:joined', serializePeer(peer));

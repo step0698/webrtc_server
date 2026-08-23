@@ -9,6 +9,20 @@ export type TransportAppData = mediasoupTypes.AppData & {
     direction: TransportDirection;
 };
 
+// Peer가 송출할 수 있는 미디어 소스를 클라이언트 UI 단위로 구분한다.
+export type MediaTag = 'microphone' | 'camera' | 'screen';
+
+// Producer appData에는 서버가 검증한 소유자와 미디어 태그만 저장한다.
+export type ProducerAppData = mediasoupTypes.AppData & {
+    peerId: string;
+    mediaTag: MediaTag;
+};
+
+export type PeerProducer = {
+    producer: mediasoupTypes.Producer;
+    mediaTag: MediaTag;
+};
+
 // Worker와 현재 배치 상태를 함께 관리하기 위한 내부 단위다.
 export type WorkerSlot = {
     id: string;

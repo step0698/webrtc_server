@@ -13,6 +13,13 @@ import {
     type TransportCreateResponse,
 } from '../signaling/handlers/TransportHandlers';
 import type { SocketAck } from '../signaling/SocketTypes';
+import {
+    handleProducerClose,
+    handleProducerCreate,
+    type ProducerClosePayload,
+    type ProducerCreatePayload,
+    type ProducerCreateResponse,
+} from '../signaling/handlers/ProducerHandlers';
 
 type testPayload = {
     data: any
@@ -72,6 +79,46 @@ export default (io: Server, mediaRoomManager: MediaRoomManager) => {
                 }
 
                 await handleTransportConnect(
+                    socket,
+                    payload,
+                    ack,
+                    mediaRoomManager,
+                );
+            },
+        );
+
+        // send Transport에 마이크, 카메라 또는 화면 공유 Producer를 생성한다.
+        socket.on(
+            'producer:create',
+            async (
+                payload: ProducerCreatePayload,
+                ack: SocketAck<ProducerCreateResponse>,
+            ) => {
+                if (typeof ack !== 'function') {
+                    return;
+                }
+
+                await handleProducerCreate(
+                    socket,
+                    payload,
+                    ack,
+                    mediaRoomManager,
+                );
+            },
+        );
+
+        // Peer가 카메라나 화면 공유 등을 중단할 때 Producer를 명시적으로 닫는다.
+        socket.on(
+            'producer:close',
+            (
+                payload: ProducerClosePayload,
+                ack: SocketAck<Record<string, never>>,
+            ) => {
+                if (typeof ack !== 'function') {
+                    return;
+                }
+
+                handleProducerClose(
                     socket,
                     payload,
                     ack,
