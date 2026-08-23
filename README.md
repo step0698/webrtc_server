@@ -296,6 +296,68 @@ socket.on('peer:joined', (payload) => {
 });
 ```
 
+### WebRTC Transport 생성
+
+Room 참가 후 `routerRtpCapabilities`로 mediasoup-client `Device`를 로드하고,
+송신용과 수신용 Transport를 각각 하나씩 생성합니다. Transport 이벤트는
+acknowledgement callback으로 성공 또는 실패를 반환합니다.
+
+```ts
+socket.emit(
+  'transport:create',
+  { direction: 'send' },
+  (result) => {
+    if (!result.ok) {
+      console.error(result.error);
+      return;
+    }
+
+    // result.data.id
+    // result.data.direction
+    // result.data.iceParameters
+    // result.data.iceCandidates
+    // result.data.dtlsParameters
+    // result.data.sctpParameters
+  }
+);
+```
+
+`direction`은 `send` 또는 `recv`만 허용하며, 한 Peer는 방향별 Transport를
+최대 하나씩 가질 수 있습니다.
+
+### WebRTC Transport 연결
+
+mediasoup-client Transport의 `connect` 이벤트에서 서버 Transport의 DTLS
+연결을 완료합니다.
+
+```ts
+sendTransport.on('connect', ({ dtlsParameters }, callback, errback) => {
+  socket.emit(
+    'transport:connect',
+    {
+      transportId: sendTransport.id,
+      dtlsParameters
+    },
+    (result) => {
+      if (!result.ok) {
+        errback(new Error(result.error.message));
+        return;
+      }
+
+      callback();
+    }
+  );
+});
+```
+
+acknowledgement 응답 형식:
+
+```ts
+type SocketResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: { code: string; message: string } };
+```
+
 ### Room 퇴장
 
 ```ts
@@ -329,6 +391,12 @@ socket.on('room:error', (payload) => {
 | `ALREADY_JOINED_ROOM` | 하나의 socket이 이미 room에 참가 중 |
 | `ROOM_NOT_FOUND` | DB에 존재하지 않는 roomCode |
 | `ROOM_JOIN_FAILED` | room 참가 처리 중 서버 오류 |
+| `INVALID_TRANSPORT_PAYLOAD` | Transport 요청 payload가 올바르지 않음 |
+| `NOT_JOINED_ROOM` | MediaRoom에 참가하지 않은 socket의 요청 |
+| `TRANSPORT_ALREADY_EXISTS` | 같은 방향 Transport가 이미 존재하거나 생성 중 |
+| `TRANSPORT_NOT_FOUND` | 요청한 Transport가 해당 Peer 소유가 아님 |
+| `TRANSPORT_CREATE_FAILED` | WebRTC Transport 생성 실패 |
+| `TRANSPORT_CONNECT_FAILED` | WebRTC Transport DTLS 연결 실패 |
 
 활성 MediaRoom과 Peer 상태는 `MediaRoomManager`의 메모리에서 관리됩니다. 서버 재시작 시 mediasoup Router와 현재 접속 상태는 초기화되고, DB의 룸 생성 정보는 PostgreSQL에 남습니다.
 
@@ -351,7 +419,7 @@ model Room {
 - 서버 진입점은 `src/app.ts`입니다.
 - 정적 파일 경로는 `src/app.ts` 기준 `public` 디렉터리로 설정되어 있습니다.
 - Prisma Client는 개발 환경에서 `globalThis`에 캐시되어 watch 모드에서 중복 인스턴스 생성을 줄입니다.
-- `socket.io.ts`는 Socket.IO 이벤트 바인딩을 담당하고, 실제 MediaRoom 참가/퇴장 처리는 `socketEvents.ts`에 분리되어 있습니다.
+- `socket.io.ts`는 Socket.IO 이벤트 바인딩을 담당하고, MediaRoom 참가/퇴장은 `socketEvents.ts`, Transport 처리는 `signaling/handlers/TransportHandlers.ts`에 분리되어 있습니다.
 - `WorkerManager`는 Worker 생성과 Room 배치를, `MediaRoomManager`는 활성 Router와 Peer 상태를 관리합니다.
 
 ## 타입 검사 및 빌드

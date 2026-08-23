@@ -1,5 +1,8 @@
 import type { types as mediasoupTypes } from 'mediasoup';
-import type { PeerResources } from '../media/MediaTypes';
+import type {
+    PeerResources,
+    TransportDirection,
+} from '../media/MediaTypes';
 
 /**
  * Room에 접속한 한 Peer가 소유하는 mediasoup 리소스를 관리한다.
@@ -12,6 +15,8 @@ export class PeerSession {
 
     // ID 기반 signaling 요청을 빠르게 검증하고 처리하기 위한 저장소다.
     private readonly transports = new Map<string, mediasoupTypes.WebRtcTransport>();
+    private readonly transportIdsByDirection = new Map<TransportDirection, string>();
+    private readonly pendingTransportDirections = new Set<TransportDirection>();
     private readonly producers = new Map<string, mediasoupTypes.Producer>();
     private readonly consumers = new Map<string, mediasoupTypes.Consumer>();
     private closed = false;
@@ -26,18 +31,76 @@ export class PeerSession {
         return this.closed;
     }
 
-    addTransport(transport: mediasoupTypes.WebRtcTransport): void {
+    beginTransportCreation(direction: TransportDirection): boolean {
+        this.assertOpen();
+
+        if (
+            this.transportIdsByDirection.has(direction) ||
+            this.pendingTransportDirections.has(direction)
+        ) {
+            return false;
+        }
+
+        this.pendingTransportDirections.add(direction);
+        return true;
+    }
+
+    cancelTransportCreation(direction: TransportDirection): void {
+        this.pendingTransportDirections.delete(direction);
+    }
+
+    addTransport(
+        transport: mediasoupTypes.WebRtcTransport,
+        direction: TransportDirection,
+    ): void {
         this.assertOpen();
         this.assertUnique(this.transports, transport.id, 'Transport');
+
+        if (this.transportIdsByDirection.has(direction)) {
+            throw new Error(`${direction} Transport is already registered.`);
+        }
+
         this.transports.set(transport.id, transport);
+        this.transportIdsByDirection.set(direction, transport.id);
+        this.pendingTransportDirections.delete(direction);
         // 외부 원인으로 리소스가 먼저 닫혀도 로컬 Map에 잔존하지 않게 한다.
         transport.observer.once('close', () => {
             this.transports.delete(transport.id);
+            if (this.transportIdsByDirection.get(direction) === transport.id) {
+                this.transportIdsByDirection.delete(direction);
+            }
         });
     }
 
     getTransport(transportId: string): mediasoupTypes.WebRtcTransport | undefined {
         return this.transports.get(transportId);
+    }
+
+    getTransportByDirection(
+        direction: TransportDirection,
+    ): mediasoupTypes.WebRtcTransport | undefined {
+        const transportId = this.transportIdsByDirection.get(direction);
+        return transportId ? this.transports.get(transportId) : undefined;
+    }
+
+    removeTransport(transportId: string): boolean {
+        const transport = this.transports.get(transportId);
+
+        if (!transport) {
+            return false;
+        }
+
+        transport.close();
+        this.transports.delete(transportId);
+
+        for (const [direction, id] of this.transportIdsByDirection) {
+            if (id === transportId) {
+                this.transportIdsByDirection.delete(direction);
+                break;
+            }
+        }
+
+        return true;
     }
 
     addProducer(producer: mediasoupTypes.Producer): void {
@@ -99,6 +162,8 @@ export class PeerSession {
         this.consumers.clear();
         this.producers.clear();
         this.transports.clear();
+        this.transportIdsByDirection.clear();
+        this.pendingTransportDirections.clear();
     }
 
     private assertOpen(): void {
