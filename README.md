@@ -435,6 +435,92 @@ socket.on('producer:closed', (payload) => {
 });
 ```
 
+### Consumer 생성
+
+`producer:available` 또는 `room:joined`의 기존 Producer 목록을 기준으로 recv
+Transport에 Consumer를 생성합니다. 서버 Consumer는 클라이언트 준비 전 RTP가
+전달되지 않도록 `paused: true`로 생성됩니다.
+
+```ts
+socket.emit(
+  'consumer:create',
+  {
+    transportId: recvTransport.id,
+    producerId,
+    rtpCapabilities: device.rtpCapabilities
+  },
+  async (result) => {
+    if (!result.ok) {
+      console.error(result.error);
+      return;
+    }
+
+    const data = result.data;
+    const consumer = await recvTransport.consume({
+      id: data.id,
+      producerId: data.producerId,
+      kind: data.kind,
+      rtpParameters: data.rtpParameters
+    });
+
+    socket.emit(
+      'consumer:resume',
+      { consumerId: consumer.id },
+      (resumeResult) => {
+        if (!resumeResult.ok) {
+          console.error(resumeResult.error);
+        }
+      }
+    );
+  }
+);
+```
+
+Consumer 생성 응답에는 원본 Producer의 `peerId`, `mediaTag`, Producer 정지
+상태도 함께 포함됩니다.
+
+```ts
+{
+  id,
+  producerId,
+  peerId,
+  kind,
+  rtpParameters,
+  type,
+  producerPaused,
+  mediaTag
+}
+```
+
+한 Peer는 동일 Producer에 대한 Consumer를 최대 하나만 가질 수 있으며,
+자신의 Producer는 소비할 수 없습니다.
+
+### Consumer 종료
+
+클라이언트가 원격 미디어 구독을 중단할 때 Consumer를 명시적으로 닫습니다.
+
+```ts
+socket.emit(
+  'consumer:close',
+  { consumerId },
+  (result) => {
+    if (!result.ok) {
+      console.error(result.error);
+    }
+  }
+);
+```
+
+원본 Producer가 종료되면 해당 Consumer를 소유한 클라이언트에 다음 이벤트가
+전달됩니다.
+
+```ts
+socket.on('consumer:closed', (payload) => {
+  // payload.consumerId
+  // payload.producerId
+});
+```
+
 ### Room 퇴장
 
 ```ts
@@ -480,6 +566,14 @@ socket.on('room:error', (payload) => {
 | `PRODUCER_NOT_FOUND` | 요청한 Producer가 해당 Peer 소유가 아님 |
 | `PRODUCER_CREATE_FAILED` | Producer 생성 실패 |
 | `PRODUCER_CLOSE_FAILED` | Producer 종료 처리 실패 |
+| `INVALID_CONSUMER_PAYLOAD` | Consumer 요청 payload가 올바르지 않음 |
+| `CANNOT_CONSUME_OWN_PRODUCER` | 자기 Producer 소비 요청 |
+| `CANNOT_CONSUME` | RTP capabilities가 Producer와 호환되지 않음 |
+| `CONSUMER_ALREADY_EXISTS` | 동일 Producer의 Consumer가 이미 존재하거나 생성 중 |
+| `CONSUMER_NOT_FOUND` | 요청한 Consumer가 해당 Peer 소유가 아님 |
+| `CONSUMER_CREATE_FAILED` | Consumer 생성 실패 |
+| `CONSUMER_RESUME_FAILED` | Consumer resume 실패 |
+| `CONSUMER_CLOSE_FAILED` | Consumer 종료 실패 |
 
 활성 MediaRoom과 Peer 상태는 `MediaRoomManager`의 메모리에서 관리됩니다. 서버 재시작 시 mediasoup Router와 현재 접속 상태는 초기화되고, DB의 룸 생성 정보는 PostgreSQL에 남습니다.
 
@@ -502,7 +596,7 @@ model Room {
 - 서버 진입점은 `src/app.ts`입니다.
 - 정적 파일 경로는 `src/app.ts` 기준 `public` 디렉터리로 설정되어 있습니다.
 - Prisma Client는 개발 환경에서 `globalThis`에 캐시되어 watch 모드에서 중복 인스턴스 생성을 줄입니다.
-- `socket.io.ts`는 Socket.IO 이벤트 바인딩을 담당하고, MediaRoom 참가/퇴장은 `socketEvents.ts`, Transport와 Producer 처리는 `signaling/handlers`에 분리되어 있습니다.
+- `socket.io.ts`는 Socket.IO 이벤트 바인딩을 담당하고, MediaRoom 참가/퇴장은 `socketEvents.ts`, Transport·Producer·Consumer 처리는 `signaling/handlers`에 분리되어 있습니다.
 - `WorkerManager`는 Worker 생성과 Room 배치를, `MediaRoomManager`는 활성 Router와 Peer 상태를 관리합니다.
 
 ## 타입 검사 및 빌드

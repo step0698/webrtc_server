@@ -1,4 +1,5 @@
 import type { types as mediasoupTypes } from 'mediasoup';
+import type { MediaTag } from './MediaTypes';
 import { PeerSession } from '../modules/PeerSession';
 
 /**
@@ -63,6 +64,29 @@ export class MediaRoom {
 
     listPeers(): readonly PeerSession[] {
         return Array.from(this.peers.values());
+    }
+
+    findProducer(producerId: string): {
+        peer: PeerSession;
+        producer: mediasoupTypes.Producer;
+        mediaTag: MediaTag;
+    } | undefined {
+        // Producer ID만 받은 Consumer 요청에서 같은 Room의 소유 Peer를 찾는다.
+        for (const peer of this.peers.values()) {
+            const peerProducer = peer.listProducers().find(({ producer }) => {
+                return producer.id === producerId;
+            });
+
+            if (peerProducer) {
+                return {
+                    peer,
+                    producer: peerProducer.producer,
+                    mediaTag: peerProducer.mediaTag,
+                };
+            }
+        }
+
+        return undefined;
     }
 
     removePeer(peerId: string): PeerSession | undefined {

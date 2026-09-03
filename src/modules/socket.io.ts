@@ -20,6 +20,14 @@ import {
     type ProducerCreatePayload,
     type ProducerCreateResponse,
 } from '../signaling/handlers/ProducerHandlers';
+import {
+    handleConsumerClose,
+    handleConsumerCreate,
+    handleConsumerResume,
+    type ConsumerCreatePayload,
+    type ConsumerCreateResponse,
+    type ConsumerIdPayload,
+} from '../signaling/handlers/ConsumerHandlers';
 
 type testPayload = {
     data: any
@@ -119,6 +127,66 @@ export default (io: Server, mediaRoomManager: MediaRoomManager) => {
                 }
 
                 handleProducerClose(
+                    socket,
+                    payload,
+                    ack,
+                    mediaRoomManager,
+                );
+            },
+        );
+
+        // recv Transport에서 같은 MediaRoom의 원격 Producer를 구독한다.
+        socket.on(
+            'consumer:create',
+            async (
+                payload: ConsumerCreatePayload,
+                ack: SocketAck<ConsumerCreateResponse>,
+            ) => {
+                if (typeof ack !== 'function') {
+                    return;
+                }
+
+                await handleConsumerCreate(
+                    socket,
+                    payload,
+                    ack,
+                    mediaRoomManager,
+                );
+            },
+        );
+
+        // 클라이언트 Consumer 생성이 끝난 뒤 서버의 RTP 전달을 시작한다.
+        socket.on(
+            'consumer:resume',
+            async (
+                payload: ConsumerIdPayload,
+                ack: SocketAck<Record<string, never>>,
+            ) => {
+                if (typeof ack !== 'function') {
+                    return;
+                }
+
+                await handleConsumerResume(
+                    socket,
+                    payload,
+                    ack,
+                    mediaRoomManager,
+                );
+            },
+        );
+
+        // 더 이상 필요하지 않은 원격 미디어 Consumer를 명시적으로 닫는다.
+        socket.on(
+            'consumer:close',
+            (
+                payload: ConsumerIdPayload,
+                ack: SocketAck<Record<string, never>>,
+            ) => {
+                if (typeof ack !== 'function') {
+                    return;
+                }
+
+                handleConsumerClose(
                     socket,
                     payload,
                     ack,

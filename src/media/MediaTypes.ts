@@ -18,6 +18,12 @@ export type ProducerAppData = mediasoupTypes.AppData & {
     mediaTag: MediaTag;
 };
 
+// Consumer appData에는 수신 Peer와 원본 Producer의 소유자 정보를 저장한다.
+export type ConsumerAppData = mediasoupTypes.AppData & {
+    peerId: string;
+    producerPeerId: string;
+};
+
 export type PeerProducer = {
     producer: mediasoupTypes.Producer;
     mediaTag: MediaTag;

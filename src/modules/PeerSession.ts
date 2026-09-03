@@ -23,6 +23,8 @@ export class PeerSession {
     private readonly producerIdsByMediaTag = new Map<MediaTag, string>();
     private readonly pendingProducerMediaTags = new Set<MediaTag>();
     private readonly consumers = new Map<string, mediasoupTypes.Consumer>();
+    private readonly consumerIdsByProducerId = new Map<string, string>();
+    private readonly pendingConsumerProducerIds = new Set<string>();
     private closed = false;
 
     constructor(peerId: string, socketId: string) {
@@ -203,18 +205,76 @@ export class PeerSession {
         return producer;
     }
 
-    addConsumer(consumer: mediasoupTypes.Consumer): void {
+    beginConsumerCreation(producerId: string): boolean {
+        this.assertOpen();
+
+        if (
+            this.consumerIdsByProducerId.has(producerId) ||
+            this.pendingConsumerProducerIds.has(producerId)
+        ) {
+            return false;
+        }
+
+        this.pendingConsumerProducerIds.add(producerId);
+        return true;
+    }
+
+    cancelConsumerCreation(producerId: string): void {
+        this.pendingConsumerProducerIds.delete(producerId);
+    }
+
+    addConsumer(
+        consumer: mediasoupTypes.Consumer,
+        producerId: string,
+    ): void {
         this.assertOpen();
         this.assertUnique(this.consumers, consumer.id, 'Consumer');
+
+        if (this.consumerIdsByProducerId.has(producerId)) {
+            throw new Error(`Consumer for Producer ${producerId} is already registered.`);
+        }
+
         this.consumers.set(consumer.id, consumer);
+        this.consumerIdsByProducerId.set(producerId, consumer.id);
+        this.pendingConsumerProducerIds.delete(producerId);
         // 원본 Producer 종료로 Consumer가 닫힌 경우 자동으로 참조를 제거한다.
         consumer.observer.once('close', () => {
             this.consumers.delete(consumer.id);
+            if (this.consumerIdsByProducerId.get(producerId) === consumer.id) {
+                this.consumerIdsByProducerId.delete(producerId);
+            }
         });
     }
 
     getConsumer(consumerId: string): mediasoupTypes.Consumer | undefined {
         return this.consumers.get(consumerId);
+    }
+
+    getConsumerByProducerId(
+        producerId: string,
+    ): mediasoupTypes.Consumer | undefined {
+        const consumerId = this.consumerIdsByProducerId.get(producerId);
+        return consumerId ? this.consumers.get(consumerId) : undefined;
+    }
+
+    removeConsumer(consumerId: string): mediasoupTypes.Consumer | undefined {
+        const consumer = this.consumers.get(consumerId);
+
+        if (!consumer) {
+            return undefined;
+        }
+
+        consumer.close();
+        this.consumers.delete(consumerId);
+
+        for (const [producerId, id] of this.consumerIdsByProducerId) {
+            if (id === consumerId) {
+                this.consumerIdsByProducerId.delete(producerId);
+                break;
+            }
+        }
+
+        return consumer;
     }
 
     getResources(): PeerResources {
@@ -246,6 +306,8 @@ export class PeerSession {
         }
 
         this.consumers.clear();
+        this.consumerIdsByProducerId.clear();
+        this.pendingConsumerProducerIds.clear();
         this.producers.clear();
         this.producerIdsByMediaTag.clear();
         this.pendingProducerMediaTags.clear();
