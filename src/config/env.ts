@@ -65,6 +65,27 @@ if (rtcMinPort > rtcMaxPort) {
     );
 }
 
+const listenIp = process.env.MEDIASOUP_LISTEN_IP?.trim() || '0.0.0.0';
+const announcedAddress =
+    process.env.MEDIASOUP_ANNOUNCED_ADDRESS?.trim() || undefined;
+
+// wildcard 주소는 수신용일 뿐 ICE candidate로 클라이언트에 전달할 수 없다.
+// 잘못된 candidate로 서버가 정상 기동하는 대신 설정 누락을 즉시 알린다.
+if (
+    (listenIp === '0.0.0.0' || listenIp === '::') &&
+    !announcedAddress
+) {
+    throw new Error(
+        'MEDIASOUP_ANNOUNCED_ADDRESS is required when MEDIASOUP_LISTEN_IP is a wildcard address.',
+    );
+}
+
+if (announcedAddress === '0.0.0.0' || announcedAddress === '::') {
+    throw new Error(
+        'MEDIASOUP_ANNOUNCED_ADDRESS must be an address reachable by WebRTC clients, not a wildcard address.',
+    );
+}
+
 /**
  * 애플리케이션에서 사용하는 환경변수를 시작 시점에 파싱하고 검증한 값이다.
  * 이후 모듈은 process.env를 직접 읽지 않고 이 객체를 사용한다.
@@ -78,10 +99,9 @@ export const env = {
         rtcMinPort,
         rtcMaxPort,
         // 0.0.0.0은 모든 네트워크 인터페이스에서 미디어 연결을 수신한다.
-        listenIp: process.env.MEDIASOUP_LISTEN_IP?.trim() || '0.0.0.0',
+        listenIp,
         // NAT/컨테이너 환경에서는 클라이언트가 접근 가능한 공인 주소가 필요하다.
-        announcedAddress:
-            process.env.MEDIASOUP_ANNOUNCED_ADDRESS?.trim() || undefined,
+        announcedAddress,
         initialAvailableOutgoingBitrate: readInteger(
             'MEDIASOUP_INITIAL_OUTGOING_BITRATE',
             1_000_000,

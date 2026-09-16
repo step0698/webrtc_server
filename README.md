@@ -94,10 +94,17 @@ MEDIASOUP_WORKER_LOG_LEVEL=warn
 MEDIASOUP_RTC_MIN_PORT=40000
 MEDIASOUP_RTC_MAX_PORT=49999
 MEDIASOUP_LISTEN_IP=0.0.0.0
-MEDIASOUP_ANNOUNCED_ADDRESS=
+# iPhone 등 WebRTC 클라이언트에서 접근 가능한 서버 주소 (예: 192.168.1.244)
+MEDIASOUP_ANNOUNCED_ADDRESS=192.168.1.244
 MEDIASOUP_INITIAL_OUTGOING_BITRATE=1000000
 DATABASE_URL=postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}?schema={POSTGRES_SCHEMA}
 ```
+
+`MEDIASOUP_LISTEN_IP`가 `0.0.0.0` 또는 `::`이면
+`MEDIASOUP_ANNOUNCED_ADDRESS`는 필수입니다. 비워 두면 클라이언트에 사용할 수
+없는 wildcard ICE candidate가 전달되는 것을 막기 위해 서버가 시작되지 않습니다.
+LAN에서 테스트할 때는 iPhone에서 접근 가능한 서버의 LAN IP를 사용하고, NAT 또는
+컨테이너 외부에서 접속할 때는 해당 환경에서 접근 가능한 공인 IP/호스트를 사용하세요.
 
 Docker Compose로 DB와 Prisma 명령을 실행할 때는 `db/docker/.env` 파일도 필요합니다.
 
